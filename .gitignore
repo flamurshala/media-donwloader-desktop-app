@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+vendor/
+tools/inno/
+tools/innosetup.exe
+tools/innosetup.exe.json
+installer/output/
+test-output/
