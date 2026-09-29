@@ -8,7 +8,7 @@ development tools.
 
 ## Run the delivered build
 
-- Installer: `installer/output/MediaDownloader-Setup.exe`
+- Installer: `setup.exe`
 - Portable directory: `dist/MediaDownloader/`; launch `MediaDownloader.exe` and
   keep the entire `_internal` directory alongside it.
 - Installer uses Program Files, requests installation elevation, adds a Start
@@ -73,7 +73,7 @@ It regenerates the icon and executable/installer version metadata from
 `app/config.py` and collects installed dependency licenses.
 
 Run `build_installer.bat` to compile `installer/MediaDownloader.iss` with Inno
-Setup. The result is `installer/output/MediaDownloader-Setup.exe`. It builds the
+Setup. The result is `setup.exe`. It builds the
 app first if no executable exists; run `build.bat` explicitly after source changes.
 The compiler is found in `tools/inno`, the standard Inno Setup 6 directory or the
 standard Inno Setup 7 directory.

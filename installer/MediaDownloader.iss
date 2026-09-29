@@ -3,13 +3,14 @@
 AppId={{930B332D-ABBA-47BE-AB0C-5D09AC0BB694}
 AppName={#AppName}
 AppVersion={#AppVersion}
+AppPublisher=Flamur Shala
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-OutputDir=output
-OutputBaseFilename=MediaDownloader-Setup
+OutputDir=..
+OutputBaseFilename=setup
 SetupIconFile=..\app\resources\icon.ico
 UninstallDisplayIcon={app}\MediaDownloader.exe
 Compression=lzma2/fast

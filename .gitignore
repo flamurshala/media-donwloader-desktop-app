@@ -9,3 +9,5 @@ tools/innosetup.exe
 tools/innosetup.exe.json
 installer/output/
 test-output/
+
+/setup.exe
