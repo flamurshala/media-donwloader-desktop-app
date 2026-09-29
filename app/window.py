@@ -5,7 +5,7 @@ from PySide6.QtCore import QSettings, QStandardPaths, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QPixmap, QIcon
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
                               QLineEdit, QPushButton, QComboBox, QCheckBox, QProgressBar,
-                              QFileDialog, QMessageBox, QFrame)
+                              QFileDialog, QMessageBox, QFrame, QListWidget)
 
 from app.config import APP_NAME, APP_ID, APP_VERSION
 from app.utils import duration, size, valid_url, resource_path
@@ -21,6 +21,8 @@ QLabel#muted { color: #69768b; }
 QLabel#videoTitle { font-size: 18px; font-weight: 600; }
 QLabel#eyebrow { color: #687b99; font-size: 11px; font-weight: 700; }
 QFrame#card { background: white; border: 1px solid #e1e6ef; border-radius: 12px; }
+QListWidget { background: white; color: #17233b; border: 1px solid #ccd5e3; border-radius: 6px; padding: 6px; }
+QListWidget::item { padding: 3px; }
 QLineEdit, QComboBox { background: white; border: 1px solid #ccd5e3; border-radius: 6px; padding: 9px; color: #17233b; }
 QLineEdit:focus, QComboBox:focus { border: 1px solid #376de8; }
 QComboBox { combobox-popup: 0; }
@@ -59,9 +61,11 @@ class MainWindow(QMainWindow):
         self.fetched_url = None
         self.closing = False
         self.last_folder = None
+        self.playlist_completed = 0
+        self.current_item_text = ""
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(QIcon(str(resource_path('app/resources/icon.ico'))))
-        self.resize(900, 740)
+        self.resize(950, 850)
         self.setMinimumSize(760, 710)
         self.setStyleSheet(STYLE)
         root = QWidget(objectName='root')
@@ -77,11 +81,11 @@ class MainWindow(QMainWindow):
         header.addStretch()
         header.addWidget(label(f'DESKTOP  /  {APP_VERSION}', 'eyebrow'))
         layout.addLayout(header)
-        layout.addWidget(label('VIDEO LINK', 'eyebrow'))
+        layout.addWidget(label('VIDEO OR PLAYLIST LINK', 'eyebrow'))
         row = QHBoxLayout()
-        self.url = QLineEdit(placeholderText='Paste a video link here…')
+        self.url = QLineEdit(placeholderText='Paste a video or YouTube playlist link here…')
         self.url.setAccessibleName('Video URL')
-        self.fetch_button = QPushButton('Fetch video', objectName='primary')
+        self.fetch_button = QPushButton('Fetch', objectName='primary')
         row.addWidget(self.url, 1)
         row.addWidget(self.fetch_button)
         layout.addLayout(row)
@@ -109,6 +113,22 @@ class MainWindow(QMainWindow):
         details.addStretch()
         card_layout.addLayout(details, 1)
         layout.addWidget(card)
+
+        self.playlist_list = QListWidget()
+        self.playlist_list.setAccessibleName('Playlist contents')
+        self.playlist_list.setMaximumHeight(130)
+        self.playlist_list.hide()
+        layout.addWidget(self.playlist_list)
+        self.overall_label = label('Playlist progress')
+        self.overall_label.setWordWrap(True)
+        self.overall_label.setMaximumHeight(42)
+        self.overall = QProgressBar()
+        self.overall.setRange(0, 100)
+        self.overall.setValue(0)
+        self.overall_label.hide()
+        self.overall.hide()
+        layout.addWidget(self.overall_label)
+        layout.addWidget(self.overall)
 
         grid = QGridLayout()
         grid.setHorizontalSpacing(14)
@@ -204,6 +224,10 @@ class MainWindow(QMainWindow):
     def invalidate(self):
         if self.url.text().strip() != self.fetched_url:
             self.info = None
+            self.playlist_list.hide()
+            self.overall.hide()
+            self.overall_label.hide()
+            self.download_button.setText('Download')
             self.download_button.setEnabled(False)
 
     def save_settings(self):
@@ -223,6 +247,7 @@ class MainWindow(QMainWindow):
     def start(self, kind, payload):
         if self.worker:
             return
+        self.current_item_text = ''
         self.worker = Worker(kind, payload)
         self.worker.event.connect(self.on_event)
         self.worker.finished.connect(self.worker_finished)
@@ -253,19 +278,45 @@ class MainWindow(QMainWindow):
         if not directory or not Path(directory).is_absolute():
             QMessageBox.warning(self, 'Choose a folder', 'Choose a valid, absolute output folder.')
             return
+        playlist = self.info if self.info.get('is_playlist') else None
+        if playlist and len(playlist['entries']) > 100:
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle('Large playlist')
+            dialog.setText(f"This playlist contains {len(playlist['entries'])} videos. Downloading it may take a long time and use significant disk space.")
+            accept = dialog.addButton('Download Playlist', QMessageBox.ButtonRole.AcceptRole)
+            dialog.addButton(QMessageBox.StandardButton.Cancel)
+            dialog.exec()
+            if dialog.clickedButton() != accept:
+                return
+        self.playlist_completed = 0
+        self.overall.setValue(0)
+        self.current_item_text = ''
         self.save_settings()
-        self.start('download', dict(url=self.fetched_url, directory=directory, mode=self.mode.currentText(),
+        self.start('download', dict(url=self.fetched_url, directory=directory, playlist=playlist, mode=self.mode.currentText(),
                                    format=self.format.currentText(), height=self.quality.currentData(), compatible=self.compatible.isChecked()))
 
     def on_event(self, event, value):
-        if event == 'status':
-            self.status.setText(value)
+        if event == 'current_item':
+            self.current_item_text = f"{value['position']} of {value['total']} — {value['title']}"
+            self.overall_label.setText('Current video: ' + self.current_item_text)
+            self.progress.setRange(0, 100)
+            self.progress.setValue(0)
+            self.percent.setText('0%')
+            self.stats.setText('Size —     •     Speed —     •     ETA —')
+        elif event == 'overall':
+            self.playlist_completed = value['downloaded'] + value['skipped']
+            self.overall.setValue(value['percent'])
+            self.overall_label.setText(f"Playlist: {value['downloaded']} downloaded, {value['skipped']} skipped, {value['failed']} failed / {value['total']}")
+        elif event == 'playlist_finished':
+            self.playlist_summary(value)
+        elif event == 'status':
+            self.status.setText(value + (' ' + self.current_item_text if self.current_item_text else ''))
             self.progress.setRange(0, 0)
             self.percent.setText('—')
         elif event == 'processing':
             self.progress.setRange(0, 0)
             self.percent.setText('—')
-            self.status.setText(value)
+            self.status.setText(value + (' ' + self.current_item_text if self.current_item_text else ''))
             self.stats.setText('Finishing your files…')
             if value == 'Saving completed files…':
                 self.cancel_button.setEnabled(False)
@@ -286,7 +337,17 @@ class MainWindow(QMainWindow):
                 self.title.setText(value['title'][:220])
                 self.title.setToolTip(value['title'])
                 self.creator.setText(value['uploader'][:160])
-                self.length.setText(duration(value['duration']))
+                playlist = value.get('is_playlist', False)
+                self.length.setText(f"Playlist • {len(value['entries'])} video{'s' if len(value['entries']) != 1 else ''}" if playlist else duration(value['duration']))
+                self.download_button.setText('Download Playlist' if playlist else 'Download')
+                self.playlist_list.clear()
+                if playlist:
+                    self.playlist_list.addItems([f"{entry['index']}. {entry['title']}" for entry in value['entries']])
+                self.playlist_list.setVisible(playlist)
+                self.overall.setVisible(playlist)
+                self.overall_label.setVisible(playlist)
+                self.overall.setValue(0)
+                self.overall_label.setText('Playlist progress')
                 self.quality.clear()
                 self.quality.addItem('Best available', None)
                 for height in value['qualities']:
@@ -297,7 +358,7 @@ class MainWindow(QMainWindow):
                 else:
                     self.thumbnail.setText('▶')
                 self.progress.setValue(0)
-                self.status.setText('Video information loaded. Choose your download options.')
+                self.status.setText('Media information loaded. Choose your download options.')
             else:
                 self.progress.setValue(100)
                 self.percent.setText('Complete')
@@ -316,6 +377,29 @@ class MainWindow(QMainWindow):
             self.status.setText('Download cancelled.' if event == 'cancelled' else 'Unable to complete the operation.')
             if event == 'error':
                 QMessageBox.warning(self, 'Operation failed', value)
+
+    def playlist_summary(self, value):
+        self.last_folder = value['folder']
+        self.open_folder.setEnabled(Path(self.last_folder).is_dir())
+        state = 'cancelled' if value['cancelled'] else 'stopped' if value['error'] else 'completed'
+        self.status.setText(f'Playlist download {state}.')
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0 if state != 'completed' else 100)
+        self.percent.setText(state.capitalize())
+        self.stats.setText(f"Downloaded: {value['downloaded']} • Skipped: {value['skipped']} • Failed: {value['failed']} • Total: {value['total']}")
+        if self.closing:
+            return
+        dialog = QMessageBox(self)
+        dialog.setTextFormat(Qt.TextFormat.PlainText)
+        dialog.setWindowTitle(f'Playlist download {state}')
+        dialog.setText(f"{value['title']}\n\n{self.stats.text()}\n\nSaved to:\n{value['folder']}" + (f"\n\n{value['error']}" if value['error'] else ''))
+        if value['details']:
+            dialog.setDetailedText('\n'.join(value['details']))
+        open_button = dialog.addButton('Open Folder', QMessageBox.ButtonRole.ActionRole)
+        dialog.addButton(QMessageBox.StandardButton.Close)
+        dialog.exec()
+        if dialog.clickedButton() == open_button:
+            self.show_folder()
 
     def worker_finished(self):
         self.worker.deleteLater()
@@ -349,7 +433,7 @@ class MainWindow(QMainWindow):
             if not self.closing:
                 dialog = QMessageBox(self)
                 dialog.setWindowTitle('Operation in progress')
-                dialog.setText('A download or fetch is currently in progress. Cancel it and exit?')
+                dialog.setText(f"A playlist download is in progress. {self.playlist_completed} of {len(self.worker.payload['playlist']['entries'])} videos completed or skipped. Cancel the playlist and exit?" if self.worker.payload.get('playlist') else 'A download or fetch is currently in progress. Cancel it and exit?')
                 quit_button = dialog.addButton('Cancel Download and Exit', QMessageBox.ButtonRole.DestructiveRole)
                 dialog.addButton('Keep Downloading', QMessageBox.ButtonRole.RejectRole)
                 dialog.exec()

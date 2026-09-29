@@ -6,11 +6,13 @@ import shutil
 import subprocess
 import urllib.request
 import traceback
+from urllib.parse import urlsplit, parse_qs
 from pathlib import Path
 
 import yt_dlp
 from yt_dlp.utils import sanitize_filename
 
+from app.playlist import is_playlist, playlist_metadata, fatal_error
 from app.formats import qualities, select_audio, select_video
 from app.utils import SafeLogger, ffmpeg_path, friendly_error, resource_path, setup_logging
 
@@ -23,11 +25,22 @@ def options():
                 js_runtimes={'deno': {'path': str(resource_path('vendor/deno/deno.exe'))}})
 
 
-def extract(url):
-    with yt_dlp.YoutubeDL(options()) as ydl:
+def extract(url, discover=False):
+    opts = options()
+    if discover:
+        parsed = urlsplit(url)
+        youtube = parsed.hostname in ('youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be')
+        if youtube and (parsed.path.startswith(('/@', '/channel/', '/c/', '/user/'))):
+            raise ValueError('Paste an individual video or playlist URL. Channel-wide downloads are not supported.')
+        opts.update(noplaylist=not (youtube and parse_qs(parsed.query).get('list')), extract_flat='in_playlist')
+    with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
-    if not info or info.get('_type') in ('playlist', 'multi_video') or 'entries' in info:
-        raise ValueError('Please paste an individual video URL. Playlist downloads are not supported.')
+    if not info:
+        raise ValueError('No media information was returned. Check the URL and try again.')
+    if is_playlist(info):
+        if discover:
+            return info
+        raise ValueError('This entry did not resolve to an individual video.')
     if info.get('is_live'):
         raise ValueError('Live streams are not supported in this version. Try a finished video.')
     # Generic direct-media URLs may not advertise codecs until the file is read.
@@ -40,7 +53,8 @@ def extract(url):
 
 
 def metadata(url):
-    info = extract(url)
+    info = extract(url, discover=True)
+    playlist = playlist_metadata(info) if is_playlist(info) else None
     thumbnail = b''
     if info.get('thumbnail', '').startswith(('https://', 'http://')):
         try:
@@ -50,7 +64,9 @@ def metadata(url):
                 thumbnail = b''
         except Exception:
             logging.info('Thumbnail unavailable')
-    return dict(title=info.get('title') or 'Untitled video', uploader=info.get('uploader') or info.get('channel') or 'Unknown creator',
+    if playlist is not None:
+        return playlist | dict(thumbnail=thumbnail)
+    return dict(is_playlist=False, title=info.get('title') or 'Untitled video', uploader=info.get('uploader') or info.get('channel') or 'Unknown creator',
                 duration=info.get('duration'), qualities=qualities(info.get('formats') or [info]), thumbnail=thumbnail)
 
 
@@ -58,7 +74,10 @@ def media_command(args):
     result = subprocess.run([str(ffmpeg_path()), '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', *map(str, args)],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     if result.returncode:
-        logging.error('FFmpeg failed: %s', result.stderr.decode('utf-8', errors='replace')[-2000:])
+        detail = result.stderr.decode('utf-8', errors='replace')[-2000:]
+        logging.error('FFmpeg failed: %s', detail)
+        if fatal_error(ValueError(detail)):
+            raise OSError(detail)
         raise ValueError('FFmpeg could not process this media. Try MKV or a different audio format.')
 
 
@@ -211,4 +230,4 @@ def process_entry(kind, payload, stage, queue):
     except Exception as exc:
         logging.error('%s failed (%s): %s', kind, type(exc).__name__, friendly_error(exc))
         logging.error('%s', re.sub(r'https?://\S+', '[URL]', traceback.format_exc()))
-        emit('error', friendly_error(exc))
+        emit('error', {'message': friendly_error(exc), 'fatal': fatal_error(exc)} if payload.get('playlist_item') else friendly_error(exc))

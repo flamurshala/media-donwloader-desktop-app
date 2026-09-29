@@ -115,7 +115,7 @@ not included in this project. See `LICENSES.md` before public redistribution.
 - Settings use per-user QSettings. Logs rotate under
   `%LOCALAPPDATA%/MediaDownloader/logs`. Nothing is written to Program Files.
 - HTTP(S) only, no shell command interpolation, no account/cookie import, DRM
-  bypass, playlists, live streams, queue or subtitles. Metadata is rendered as
+  bypass, live streams, channel-wide downloads or subtitles. Metadata is rendered as
   plain text. Only download content you are permitted to save.
 - yt-dlp and EJS updates require changing the pinned dependency and rebuilding.
   There is no self-modifying updater.
@@ -154,3 +154,37 @@ verified results and external-network limitations.
   for source streams, processed media and final output during publication.
 - **Compiler missing:** install Inno Setup from its official site and use one of
   the paths above. FFmpeg and Deno downloads do not install the compiler.
+
+
+## YouTube playlists (1.1.0)
+
+Paste a playlist URL (including a watch URL containing `list=`), click Fetch,
+then use Download Playlist. Metadata is detected from yt-dlp's returned type and
+entries; flat extraction avoids inspecting every video's formats up front. The
+scrollable contents list retains original order. Standard playlist quality
+choices are ceilings: each entry independently uses the best available height
+at or below the choice. Single videos still show their discovered qualities.
+
+All four download modes apply to each entry sequentially, including FFmpeg
+processing. Files go into a sanitized playlist-title subfolder with `001 - Title`
+names; separate mode adds ` - video` / ` - audio`. The overall bar counts finished
+entries (including skips and failures); the current stream bar shows bytes,
+speed and ETA. The completion dialog includes counts, details and Open Folder.
+
+Unavailable entries are skipped when identifiable up front; extraction/download
+failures are recorded individually and processing continues. Disk, permission,
+and missing-tool failures stop the queue. Cancel stops the active process tree
+and removes its private staging folder, preserving earlier completed items.
+Publication of a completed item finishes before cancellation takes effect.
+
+A folder-local `.media-downloader-receipts.json` records published filenames and
+sizes per entry and download settings. A restart skips those matching completed
+files. Changed settings produce new files without overwriting existing output.
+Receipts are not a global archive. Do not edit them while downloading.
+
+Playlists over 100 entries require confirmation. Selection checkboxes and ranges
+are not included. Playlist URLs must be publicly accessible; login, cookies,
+private-content access and DRM circumvention are not provided.
+
+Additional playlist tests:
+`.venv\Scripts\python.exe -m unittest discover -s tests -p test_playlist.py -v`
